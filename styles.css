@@ -159,8 +159,8 @@
     background: var(--background-modifier-hover);
     color: var(--text-normal);
 }
-.deepseek-cli-toggle-active {
-    color: var(--interactive-accent) !important;
+.deepseek-cli-icon-btn.deepseek-cli-toggle-active {
+    color: var(--interactive-accent);
     background: var(--background-modifier-hover);
 }
 
