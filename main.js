@@ -1,6 +1,6 @@
-const { Plugin, ItemView, Notice, requestUrl, MarkdownRenderer, PluginSettingTab, Setting } = require('obsidian');
+const { Plugin, ItemView, Notice, requestUrl, MarkdownRenderer, PluginSettingTab, Setting, FuzzySuggestModal } = require('obsidian');
 
-const VIEW_TYPE = 'copilot-cli-chat';
+const VIEW_TYPE = 'deepseek-cli-chat';
 
 // ====== Default settings ======
 const DEFAULT_SETTINGS = {
@@ -8,6 +8,7 @@ const DEFAULT_SETTINGS = {
     baseUrl: 'https://api.deepseek.com/anthropic',
     apiKey: 'sk-14a5e1375ab64630a519aa18ea5a8dcd',
     model: 'deepseek-v4-pro',
+    models: 'deepseek-v4-pro, deepseek-chat, deepseek-reasoner',
 };
 
 // ====== Helpers ======
@@ -42,86 +43,180 @@ const ICONS = {
     codeCheck: '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>',
     sidebarOpen: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line></svg>',
     sidebarClose: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="9" y1="3" x2="9" y2="21"></line><line x1="15" y1="9" x2="9" y2="15"></line></svg>',
+    stop: '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="6" y="6" width="12" height="12" rx="2"></rect></svg>',
+    robot: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="13" rx="3"/><line x1="12" y1="4" x2="12" y2="8"/><circle cx="12" cy="3" r="1.5"/><circle cx="9" cy="13" r="1.5" fill="currentColor" stroke="none"/><circle cx="15" cy="13" r="1.5" fill="currentColor" stroke="none"/><line x1="8" y1="18" x2="16" y2="18"/></svg>',
+    userPerson: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
+    edit: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>',
+    addFiles: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>',
+    plan: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>',
+    sparkle: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>',
+    lock: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
+    unlock: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></svg>',
+    xSmall: '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
+    chevronDown: '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>',
+    loader: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg>',
 };
 
+// ====== File Select Modal ======
+class FileSelectModal extends FuzzySuggestModal {
+    constructor(app, items, onSubmit) {
+        super(app);
+        this.items = items;
+        this.onSubmit = onSubmit;
+        this.selected = new Set();
+        this.setPlaceholder('Search files to add as context...');
+    }
+
+    getItems() { return this.items; }
+    getItemText(item) {
+        return (this.selected.has(item.path) ? '✓ ' : '') + item.name;
+    }
+    onChooseItem(item, evt) {
+        if (this.selected.has(item.path)) {
+            this.selected.delete(item.path);
+        } else {
+            this.selected.add(item.path);
+        }
+        // Refresh suggestions to show checkmarks
+        this.inputEl.value = '';
+        this.inputEl.dispatchEvent(new Event('input'));
+        // Show current selection count
+        if (this.selected.size > 0) {
+            this.resultContainerEl.createDiv({ text: `Selected: ${this.selected.size} file(s)`, cls: 'suggestion-hotkey' });
+        }
+    }
+
+    onClose() {
+        super.onClose();
+        if (this.selected.size > 0) {
+            this.onSubmit(Array.from(this.selected));
+        }
+    }
+}
+
 // ====== Chat View ======
-class CopilotChatView extends ItemView {
+class DeepSeekChatView extends ItemView {
     constructor(leaf, plugin) {
         super(leaf);
         this.plugin = plugin;
     }
 
     getViewType() { return VIEW_TYPE; }
-    getDisplayText() { return 'Copilot CLI'; }
+    getDisplayText() { return 'DeepSeek CLI'; }
     getIcon() { return 'bot'; }
 
     async onOpen() {
         const container = this.containerEl.children[1];
         container.empty();
-        container.addClass('copilot-cli-container');
+        container.addClass('deepseek-cli-container');
 
         // === Top-level layout: sidebar + main ===
-        const layout = container.createDiv('copilot-cli-layout');
+        const layout = container.createDiv('deepseek-cli-layout');
 
         // ---- History Sidebar ----
-        this.sidebar = layout.createDiv('copilot-cli-sidebar');
-        const sidebarHeader = this.sidebar.createDiv('copilot-cli-sidebar-header');
-        sidebarHeader.createSpan({ text: 'History', cls: 'copilot-cli-sidebar-title' });
-        const newChatBtn = sidebarHeader.createEl('button', { cls: 'copilot-cli-new-chat-btn' });
+        this.sidebar = layout.createDiv('deepseek-cli-sidebar');
+        const sidebarHeader = this.sidebar.createDiv('deepseek-cli-sidebar-header');
+        sidebarHeader.createSpan({ text: 'History', cls: 'deepseek-cli-sidebar-title' });
+        const newChatBtn = sidebarHeader.createEl('button', { cls: 'deepseek-cli-new-chat-btn' });
         newChatBtn.innerHTML = ICONS.plus + ' New';
         newChatBtn.addEventListener('click', () => this.newConversation());
-        this.convList = this.sidebar.createDiv('copilot-cli-sidebar-list');
+        this.convList = this.sidebar.createDiv('deepseek-cli-sidebar-list');
 
         // ---- Main Chat Panel ----
-        this.mainPanel = layout.createDiv('copilot-cli-main');
+        this.mainPanel = layout.createDiv('deepseek-cli-main');
 
         // Header bar
-        this.header = this.mainPanel.createDiv('copilot-cli-header');
-        const headerLeft = this.header.createDiv('copilot-cli-header-left');
-        this.toggleBtn = headerLeft.createEl('button', { cls: 'copilot-cli-icon-btn', attr: { 'aria-label': 'Show history' } });
+        this.header = this.mainPanel.createDiv('deepseek-cli-header');
+        const headerLeft = this.header.createDiv('deepseek-cli-header-left');
+        this.toggleBtn = headerLeft.createEl('button', { cls: 'deepseek-cli-icon-btn', attr: { 'aria-label': 'Show history' } });
         this.toggleBtn.innerHTML = ICONS.history;
         this.toggleBtn.addEventListener('click', () => this.toggleSidebar());
-        this.headerStatus = headerLeft.createSpan('copilot-cli-header-status');
+        this.headerStatus = headerLeft.createSpan('deepseek-cli-header-status');
 
-        const headerRight = this.header.createDiv('copilot-cli-header-right');
-        const clearBtn = headerRight.createEl('button', { cls: 'copilot-cli-icon-btn', attr: { 'aria-label': 'Clear chat' } });
+        const headerRight = this.header.createDiv('deepseek-cli-header-right');
+
+        // Model selector
+        this.modelSelect = headerRight.createEl('select', { cls: 'deepseek-cli-model-select' });
+        const models = (this.plugin.settings.models || DEFAULT_SETTINGS.models).split(',').map(m => m.trim()).filter(Boolean);
+        models.forEach(m => {
+            const opt = this.modelSelect.createEl('option', { text: m, value: m });
+            if (m === this.plugin.settings.model) opt.selected = true;
+        });
+        this.modelSelect.addEventListener('change', async () => {
+            this.plugin.settings.model = this.modelSelect.value;
+            await this.plugin.saveSettings();
+            this.updateStatus();
+        });
+        const clearBtn = headerRight.createEl('button', { cls: 'deepseek-cli-icon-btn', attr: { 'aria-label': 'Clear chat' } });
         clearBtn.innerHTML = ICONS.trash;
         clearBtn.addEventListener('click', () => this.clearChat());
-        const settingsBtn = headerRight.createEl('button', { cls: 'copilot-cli-icon-btn', attr: { 'aria-label': 'Settings' } });
+        const settingsBtn = headerRight.createEl('button', { cls: 'deepseek-cli-icon-btn', attr: { 'aria-label': 'Settings' } });
         settingsBtn.innerHTML = ICONS.settings;
         settingsBtn.addEventListener('click', () => {
             this.app.setting.open();
-            this.app.setting.openTabById('copilot-cli');
+            this.app.setting.openTabById('deepseek-cli');
         });
 
         // Chat area
-        this.chatArea = this.mainPanel.createDiv('copilot-cli-chat');
+        this.chatArea = this.mainPanel.createDiv('deepseek-cli-chat');
 
         // Loading indicator
-        this.loadingEl = this.mainPanel.createDiv('copilot-cli-loading');
-        this.loadingEl.createDiv('copilot-cli-loading-dot');
-        this.loadingEl.createDiv('copilot-cli-loading-dot');
-        this.loadingEl.createDiv('copilot-cli-loading-dot');
+        this.loadingEl = this.mainPanel.createDiv('deepseek-cli-loading');
+        this.loadingEl.createDiv('deepseek-cli-loading-dot');
+        this.loadingEl.createDiv('deepseek-cli-loading-dot');
+        this.loadingEl.createDiv('deepseek-cli-loading-dot');
         this.loadingEl.style.display = 'none';
 
         // Input area
-        const inputArea = this.mainPanel.createDiv('copilot-cli-input-area');
-        const inputRow = inputArea.createDiv('copilot-cli-input-row');
+        const inputArea = this.mainPanel.createDiv('deepseek-cli-input-area');
+
+        // Context file chips
+        this.chipsContainer = inputArea.createDiv('deepseek-cli-chips');
+
+        // Badge indicators
+        this.badgesRow = inputArea.createDiv('deepseek-cli-badges');
+
+        const inputRow = inputArea.createDiv('deepseek-cli-input-row');
+
+        // "+" button
+        this.plusBtn = inputRow.createEl('button', { cls: 'deepseek-cli-plus-btn' });
+        this.plusBtn.innerHTML = ICONS.plus;
+        this.plusBtn.setAttribute('aria-label', 'Add context');
+        this.plusBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.togglePopover();
+        });
+
         this.inputEl = inputRow.createEl('textarea', {
-            placeholder: 'Ask Copilot...',
-            cls: 'copilot-cli-input',
+            placeholder: 'Ask DeepSeek...',
+            cls: 'deepseek-cli-input',
             attr: { rows: '2' }
         });
-        this.sendBtn = inputRow.createEl('button', { cls: 'copilot-cli-send-btn' });
+        this.sendBtn = inputRow.createEl('button', { cls: 'deepseek-cli-send-btn' });
         this.sendBtn.innerHTML = ICONS.send;
-        this.sendBtn.addEventListener('click', () => this.sendMessage());
-
-        this.inputEl.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
+        this.sendBtn.addEventListener('click', () => {
+            if (this.isGenerating) {
+                this.stopGeneration();
+            } else {
                 this.sendMessage();
             }
         });
+
+        // Popover menu
+        this.popover = inputArea.createDiv('deepseek-cli-popover');
+        this.popover.style.display = 'none';
+        this.buildPopoverContent();
+
+        // Close popover on outside click
+        document.addEventListener('click', (e) => {
+            if (this.popover && this.popover.style.display !== 'none') {
+                if (!this.popover.contains(e.target) && e.target !== this.plusBtn) {
+                    this.popover.style.display = 'none';
+                }
+            }
+        });
+
+        // Enter = newline; only clicking Send button sends the message
         this.inputEl.addEventListener('input', () => {
             this.inputEl.style.height = 'auto';
             this.inputEl.style.height = Math.min(this.inputEl.scrollHeight, 120) + 'px';
@@ -131,8 +226,13 @@ class CopilotChatView extends ItemView {
         this.conversation = this.plugin.getActiveConversation();
         this.sidebarVisible = false;
         this.sidebar.style.display = 'none';
+        this.contextFiles = [];
+        this.planMode = false;
+        this.permission = 'read-only';
         this.renderSidebar();
         this.renderAllMessages();
+        this.renderChips();
+        this.renderBadges();
         this.updateStatus();
         this.scrollToBottom();
     }
@@ -149,9 +249,9 @@ class CopilotChatView extends ItemView {
             this.toggleBtn.innerHTML = this.sidebarVisible ? ICONS.sidebarClose : ICONS.history;
             this.toggleBtn.setAttribute('aria-label', this.sidebarVisible ? 'Hide history' : 'Show history');
             if (this.sidebarVisible) {
-                this.toggleBtn.addClass('copilot-cli-toggle-active');
+                this.toggleBtn.addClass('deepseek-cli-toggle-active');
             } else {
-                this.toggleBtn.removeClass('copilot-cli-toggle-active');
+                this.toggleBtn.removeClass('deepseek-cli-toggle-active');
             }
         }
     }
@@ -162,17 +262,17 @@ class CopilotChatView extends ItemView {
         const activeId = this.conversation?.id;
 
         conversations.forEach(conv => {
-            const item = this.convList.createDiv('copilot-cli-sidebar-item');
-            if (conv.id === activeId) item.addClass('copilot-cli-sidebar-item-active');
+            const item = this.convList.createDiv('deepseek-cli-sidebar-item');
+            if (conv.id === activeId) item.addClass('deepseek-cli-sidebar-item-active');
 
-            const info = item.createDiv('copilot-cli-sidebar-item-info');
-            info.createDiv({ text: conv.title || 'New Chat', cls: 'copilot-cli-sidebar-item-title' });
-            info.createDiv({ text: this.formatTime(new Date(conv.updatedAt)), cls: 'copilot-cli-sidebar-item-time' });
+            const info = item.createDiv('deepseek-cli-sidebar-item-info');
+            info.createDiv({ text: conv.title || 'New Chat', cls: 'deepseek-cli-sidebar-item-title' });
+            info.createDiv({ text: this.formatTime(new Date(conv.updatedAt)), cls: 'deepseek-cli-sidebar-item-time' });
 
             item.addEventListener('click', () => this.switchConversation(conv.id));
 
             // Delete button
-            const delBtn = item.createEl('button', { cls: 'copilot-cli-sidebar-del-btn', attr: { 'aria-label': 'Delete' } });
+            const delBtn = item.createEl('button', { cls: 'deepseek-cli-sidebar-del-btn', attr: { 'aria-label': 'Delete' } });
             delBtn.innerHTML = ICONS.trashSmall;
             delBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
@@ -235,10 +335,14 @@ class CopilotChatView extends ItemView {
         const s = this.plugin.settings;
         const isConfigured = s.apiKey && s.baseUrl && s.model;
         if (isConfigured) {
-            const label = s.providerType === 'anthropic' ? 'Anthropic' : 'OpenAI';
-            this.headerStatus.setText(`✨ ${label} · ${s.model}`);
+            this.headerStatus.setText(`✨ ${s.model}`);
         } else {
             this.headerStatus.setText('⚠ Configure API settings');
+        }
+        // Show total tokens for current conversation
+        const total = this.conversation?.totalTokens || 0;
+        if (total > 0) {
+            this.headerStatus.createSpan({ text: ` | ${total.toLocaleString()} tokens`, cls: 'deepseek-cli-token-total' });
         }
     }
 
@@ -254,35 +358,39 @@ class CopilotChatView extends ItemView {
     }
 
     renderWelcome() {
-        const welcome = this.chatArea.createDiv('copilot-cli-welcome');
-        welcome.createEl('div', { cls: 'copilot-cli-welcome-icon', text: '🤖' });
-        welcome.createEl('h3', { text: 'Copilot CLI Chat' });
+        const welcome = this.chatArea.createDiv('deepseek-cli-welcome');
+        welcome.createEl('div', { cls: 'deepseek-cli-welcome-icon' }).innerHTML = ICONS.robot;
+        welcome.createEl('h3', { text: 'DeepSeek CLI Chat' });
         welcome.createEl('p', { text: `Connected via ${this.plugin.settings.providerType === 'anthropic' ? 'Anthropic protocol' : 'OpenAI protocol'} · ${this.plugin.settings.model}` });
-        const hints = welcome.createDiv('copilot-cli-welcome-hints');
-        hints.createEl('div', { text: '💡 Ask questions about your notes', cls: 'copilot-cli-hint' });
-        hints.createEl('div', { text: '✏️ Get help with writing and editing', cls: 'copilot-cli-hint' });
-        hints.createEl('div', { text: '💻 Get code explanations and snippets', cls: 'copilot-cli-hint' });
+        const hints = welcome.createDiv('deepseek-cli-welcome-hints');
+        hints.createEl('div', { text: '💡 Ask questions about your notes', cls: 'deepseek-cli-hint' });
+        hints.createEl('div', { text: '✏️ Get help with writing and editing', cls: 'deepseek-cli-hint' });
+        hints.createEl('div', { text: '💻 Get code explanations and snippets', cls: 'deepseek-cli-hint' });
     }
 
     renderMessage(msg) {
-        const wrapper = this.chatArea.createDiv(`copilot-cli-msg copilot-cli-msg-${msg.role}`);
+        const wrapper = this.chatArea.createDiv(`deepseek-cli-msg deepseek-cli-msg-${msg.role}`);
 
         // Header
-        const msgHeader = wrapper.createDiv('copilot-cli-msg-header');
-        const avatar = msgHeader.createDiv('copilot-cli-avatar');
+        const msgHeader = wrapper.createDiv('deepseek-cli-msg-header');
+        const avatar = msgHeader.createDiv('deepseek-cli-avatar');
         if (msg.role === 'user') {
-            avatar.createSpan({ text: '👤', cls: 'copilot-cli-avatar-icon' });
-            msgHeader.createSpan({ text: 'You', cls: 'copilot-cli-msg-name' });
+            avatar.createSpan({ cls: 'deepseek-cli-avatar-icon' }).innerHTML = ICONS.userPerson;
+            msgHeader.createSpan({ text: 'You', cls: 'deepseek-cli-msg-name' });
         } else {
-            avatar.createSpan({ text: '🤖', cls: 'copilot-cli-avatar-icon' });
-            msgHeader.createSpan({ text: 'Copilot', cls: 'copilot-cli-msg-name' });
-            if (msg.model) msgHeader.createSpan({ text: msg.model, cls: 'copilot-cli-model-tag' });
+            avatar.createSpan({ cls: 'deepseek-cli-avatar-icon' }).innerHTML = ICONS.robot;
+            msgHeader.createSpan({ text: 'DeepSeek', cls: 'deepseek-cli-msg-name' });
+            if (msg.model) msgHeader.createSpan({ text: msg.model, cls: 'deepseek-cli-model-tag' });
+            if (msg.tokens) {
+                const total = msg.tokens.input + msg.tokens.output;
+                msgHeader.createSpan({ text: `${total.toLocaleString()} tokens`, cls: 'deepseek-cli-msg-tokens' });
+            }
         }
-        if (msg.timestamp) msgHeader.createSpan({ text: this.formatTime(new Date(msg.timestamp)), cls: 'copilot-cli-msg-time' });
+        if (msg.timestamp) msgHeader.createSpan({ text: this.formatTime(new Date(msg.timestamp)), cls: 'deepseek-cli-msg-time' });
 
         // Body
-        const body = wrapper.createDiv('copilot-cli-msg-body');
-        const content = body.createDiv('copilot-cli-msg-content');
+        const body = wrapper.createDiv('deepseek-cli-msg-body');
+        const content = body.createDiv('deepseek-cli-msg-content');
         if (msg.role === 'assistant' && msg.content) {
             MarkdownRenderer.render(this.app, msg.content, content, '', this.plugin);
             // add code copy buttons after render (next tick)
@@ -291,9 +399,16 @@ class CopilotChatView extends ItemView {
             content.setText(msg.content);
         }
 
+        // Action buttons for user
+        if (msg.role === 'user' && msg.content) {
+            const actions = wrapper.createDiv('deepseek-cli-msg-actions');
+            this.createActionBtn(actions, ICONS.copy, 'Copy', () => this.copyMessageContent(msg.content));
+            this.createActionBtn(actions, ICONS.edit, 'Edit', () => this.editUserMessage(msg));
+        }
+
         // Action buttons for assistant
         if (msg.role === 'assistant' && msg.content && !msg.content.startsWith('**Error:**')) {
-            const actions = wrapper.createDiv('copilot-cli-msg-actions');
+            const actions = wrapper.createDiv('deepseek-cli-msg-actions');
             this.createActionBtn(actions, ICONS.copy, 'Copy', () => this.copyMessageContent(msg.content));
             this.createActionBtn(actions, ICONS.refresh, 'Regenerate', () => this.regenerateMessage(msg));
             this.createActionBtn(actions, ICONS.trashSmall, 'Delete', () => this.deleteMessage(msg));
@@ -301,7 +416,7 @@ class CopilotChatView extends ItemView {
     }
 
     createActionBtn(container, iconHtml, tooltip, onClick) {
-        const btn = container.createEl('button', { cls: 'copilot-cli-action-btn', attr: { 'aria-label': tooltip } });
+        const btn = container.createEl('button', { cls: 'deepseek-cli-action-btn', attr: { 'aria-label': tooltip } });
         btn.innerHTML = iconHtml;
         btn.addEventListener('click', () => onClick());
     }
@@ -316,9 +431,9 @@ class CopilotChatView extends ItemView {
     addCodeCopyButtons(container) {
         const preEls = container.querySelectorAll('pre');
         preEls.forEach(pre => {
-            if (pre.closest('.copilot-cli-code-block')) return;
+            if (pre.closest('.deepseek-cli-code-block')) return;
             const wrapper = document.createElement('div');
-            wrapper.className = 'copilot-cli-code-block';
+            wrapper.className = 'deepseek-cli-code-block';
             pre.parentNode.insertBefore(wrapper, pre);
             wrapper.appendChild(pre);
 
@@ -330,14 +445,14 @@ class CopilotChatView extends ItemView {
             }
 
             const header = document.createElement('div');
-            header.className = 'copilot-cli-code-header';
+            header.className = 'deepseek-cli-code-header';
             const langLabel = document.createElement('span');
-            langLabel.className = 'copilot-cli-code-lang';
+            langLabel.className = 'deepseek-cli-code-lang';
             langLabel.textContent = lang || 'code';
             header.appendChild(langLabel);
 
             const copyBtn = document.createElement('button');
-            copyBtn.className = 'copilot-cli-code-copy-btn';
+            copyBtn.className = 'deepseek-cli-code-copy-btn';
             copyBtn.innerHTML = ICONS.codeCopy + ' Copy';
             copyBtn.addEventListener('click', () => {
                 navigator.clipboard.writeText(pre.textContent || '').then(() => {
@@ -360,11 +475,18 @@ class CopilotChatView extends ItemView {
         const messages = this.conversation.messages;
         const idx = messages.indexOf(msg);
         if (idx === -1) return;
-        this.conversation.messages = messages.slice(0, idx);
+        // Remove the assistant message and all messages after it, adjusting tokens
+        const removed = this.conversation.messages.slice(idx);
+        this.conversation.messages = this.conversation.messages.slice(0, idx);
+        for (const m of removed) {
+            if (m.tokens) {
+                this.conversation.totalTokens = Math.max(0, (this.conversation.totalTokens || 0) - m.tokens.input - m.tokens.output);
+            }
+        }
         await this.plugin.saveDataFull();
         this.renderAllMessages();
         this.scrollToBottom();
-        const lastUser = messages.filter(m => m.role === 'user').pop();
+        const lastUser = this.conversation.messages.filter(m => m.role === 'user').pop();
         if (lastUser) {
             this.inputEl.value = lastUser.content;
             this.sendMessage();
@@ -374,11 +496,241 @@ class CopilotChatView extends ItemView {
     async deleteMessage(msg) {
         const idx = this.conversation.messages.indexOf(msg);
         if (idx === -1) return;
+        // Subtract tokens if deleting an assistant message with tokens
+        if (msg.tokens) {
+            this.conversation.totalTokens = Math.max(0, (this.conversation.totalTokens || 0) - msg.tokens.input - msg.tokens.output);
+        }
         this.conversation.messages.splice(idx, 1);
         await this.plugin.saveDataFull();
         this.renderAllMessages();
         this.updateStatus();
         this.scrollToBottom();
+    }
+
+    async editUserMessage(msg) {
+        // Trim the conversation to just before this message
+        const idx = this.conversation.messages.indexOf(msg);
+        if (idx === -1) return;
+        // If there are assistant messages after this user message, remove them
+        const removed = this.conversation.messages.slice(idx + 1);
+        for (const m of removed) {
+            if (m.tokens) {
+                this.conversation.totalTokens = Math.max(0, (this.conversation.totalTokens || 0) - m.tokens.input - m.tokens.output);
+            }
+        }
+        this.conversation.messages = this.conversation.messages.slice(0, idx);
+        // Set the message text in input, then re-send
+        this.inputEl.value = msg.content;
+        this.inputEl.style.height = 'auto';
+        this.inputEl.style.height = Math.min(this.inputEl.scrollHeight, 120) + 'px';
+        this.inputEl.focus();
+        // Place cursor at end
+        this.inputEl.setSelectionRange(this.inputEl.value.length, this.inputEl.value.length);
+        // Remove this user message from the conversation
+        await this.plugin.saveDataFull();
+        this.renderAllMessages();
+        this.updateStatus();
+        this.scrollToBottom();
+    }
+
+    // ===== Popover =====
+    togglePopover() {
+        if (this.popover.style.display === 'none') {
+            this.popover.style.display = 'block';
+        } else {
+            this.popover.style.display = 'none';
+        }
+    }
+
+    buildPopoverContent() {
+        this.popover.empty();
+        const items = [
+            { icon: ICONS.addFiles, label: 'Add Files & Folders', desc: 'Attach vault files as context', action: () => { this.popover.style.display = 'none'; this.openFileSelector(); } },
+            { icon: ICONS.plan, label: 'Plan Mode', desc: 'AI outlines a plan before executing', action: () => { this.popover.style.display = 'none'; this.togglePlanMode(); } },
+            { icon: ICONS.sparkle, label: 'Polish Prompt', desc: 'AI improves your prompt wording', action: () => { this.popover.style.display = 'none'; this.polishPrompt(); } },
+            { icon: this.permission === 'read-only' ? ICONS.lock : ICONS.unlock,
+              label: 'Permission',
+              desc: this.permission === 'read-only' ? 'Read-only mode' : 'Read & Write mode',
+              action: () => { this.popover.style.display = 'none'; this.togglePermission(); } },
+        ];
+        items.forEach(item => {
+            const el = this.popover.createDiv('deepseek-cli-popover-item');
+            const iconSpan = el.createSpan('deepseek-cli-popover-item-icon');
+            iconSpan.innerHTML = item.icon;
+            const textDiv = el.createDiv('deepseek-cli-popover-item-text');
+            textDiv.createDiv({ text: item.label, cls: 'deepseek-cli-popover-item-label' });
+            textDiv.createDiv({ text: item.desc, cls: 'deepseek-cli-popover-item-desc' });
+            el.addEventListener('click', item.action);
+        });
+    }
+
+    // ===== Badges =====
+    renderBadges() {
+        this.badgesRow.empty();
+        if (this.planMode) {
+            const badge = this.badgesRow.createSpan('deepseek-cli-badge deepseek-cli-badge-plan');
+            badge.innerHTML = ICONS.plan + ' Plan';
+        }
+        const permBadge = this.badgesRow.createSpan('deepseek-cli-badge');
+        if (this.permission === 'read-only') {
+            permBadge.addClass('deepseek-cli-badge-readonly');
+            permBadge.innerHTML = ICONS.lock + ' Read-only';
+        } else {
+            permBadge.addClass('deepseek-cli-badge-readwrite');
+            permBadge.innerHTML = ICONS.unlock + ' Read & Write';
+        }
+    }
+
+    // ===== Chips =====
+    renderChips() {
+        if (!this.chipsContainer) return;
+        this.chipsContainer.empty();
+        this.contextFiles.forEach(filePath => {
+            const chip = this.chipsContainer.createDiv('deepseek-cli-chip');
+            const name = filePath.split('/').pop();
+            chip.createSpan({ text: '📄 ' + name, cls: 'deepseek-cli-chip-name' });
+            const removeBtn = chip.createSpan('deepseek-cli-chip-remove');
+            removeBtn.innerHTML = ICONS.xSmall;
+            removeBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.removeContextFile(filePath);
+            });
+        });
+    }
+
+    removeContextFile(filePath) {
+        this.contextFiles = this.contextFiles.filter(f => f !== filePath);
+        this.renderChips();
+    }
+
+    // ===== File Selector =====
+    openFileSelector() {
+        const allFiles = this.app.vault.getMarkdownFiles();
+        const items = allFiles.map(f => ({
+            path: f.path,
+            name: f.path,
+        }));
+        new FileSelectModal(this.app, items, (selectedPaths) => {
+            selectedPaths.forEach(p => {
+                if (!this.contextFiles.includes(p)) {
+                    this.contextFiles.push(p);
+                }
+            });
+            this.renderChips();
+        }).open();
+    }
+
+    // ===== Plan Mode =====
+    togglePlanMode() {
+        this.planMode = !this.planMode;
+        this.renderBadges();
+        // Rebuild popover to update labels/toggles
+        this.buildPopoverContent();
+    }
+
+    // ===== Permission =====
+    togglePermission() {
+        this.permission = this.permission === 'read-only' ? 'read-write' : 'read-only';
+        this.renderBadges();
+        this.buildPopoverContent();
+    }
+
+    // ===== Polish Prompt =====
+    async polishPrompt() {
+        const text = this.inputEl.value.trim();
+        if (!text) {
+            new Notice('Enter a prompt to polish first.');
+            return;
+        }
+        const s = this.plugin.settings;
+        if (!s.apiKey || !s.baseUrl) {
+            new Notice('Please configure API settings.');
+            return;
+        }
+
+        // Show polishing state
+        this.inputEl.disabled = true;
+        this.inputEl.placeholder = 'Polishing...';
+        const origBg = this.sendBtn.style.background;
+        this.sendBtn.style.background = 'var(--text-warning)';
+
+        try {
+            const polishSystem = 'You are a prompt improvement assistant. Take the user\'s message and rewrite it to be clearer, more specific, and more effective. Only output the improved prompt, nothing else. Do not add explanations, quotes, or any other text.';
+            let improved = '';
+
+            if (s.providerType === 'anthropic') {
+                const response = await requestUrl({
+                    url: s.baseUrl.replace(/\/$/, '') + '/v1/messages',
+                    method: 'POST',
+                    headers: buildAnthropicHeaders(s.apiKey),
+                    body: JSON.stringify({
+                        model: s.model,
+                        max_tokens: 1024,
+                        system: polishSystem,
+                        messages: [{ role: 'user', content: text }],
+                        stream: false,
+                    }),
+                });
+                const data = response.json;
+                improved = data.content?.map(c => c.text).join('') || text;
+            } else {
+                const response = await requestUrl({
+                    url: s.baseUrl.replace(/\/$/, '') + '/v1/chat/completions',
+                    method: 'POST',
+                    headers: buildOpenAIHeaders(s.apiKey),
+                    body: JSON.stringify({
+                        model: s.model,
+                        messages: [
+                            { role: 'system', content: polishSystem },
+                            { role: 'user', content: text },
+                        ],
+                        stream: false,
+                        temperature: 0.7,
+                    }),
+                });
+                const data = response.json;
+                improved = data.choices?.[0]?.message?.content || text;
+            }
+
+            this.inputEl.value = improved.trim();
+            this.inputEl.style.height = 'auto';
+            this.inputEl.style.height = Math.min(this.inputEl.scrollHeight, 120) + 'px';
+            new Notice('Prompt polished ✨');
+        } catch (err) {
+            new Notice('Polish failed: ' + err.message);
+        }
+
+        this.inputEl.disabled = false;
+        this.inputEl.placeholder = 'Ask DeepSeek...';
+        this.sendBtn.style.background = origBg;
+        this.inputEl.focus();
+    }
+
+    // ===== System Instructions =====
+    getSystemInstructions() {
+        const parts = [];
+        if (this.planMode) {
+            parts.push('You are in PLAN mode. Before implementing anything, output a concise plan outlining your approach step by step. Do NOT execute or make any changes yet — wait for the user to review and approve the plan before proceeding. End your plan with a clear ask for approval, e.g. "Shall I proceed with this plan?"');
+        }
+        if (this.permission === 'read-only') {
+            parts.push('You are in READ-ONLY mode. Do NOT create, modify, or delete any files. You can only read and provide advice, explanations, and code snippets for the user to copy manually.');
+        } else {
+            parts.push('You have READ & WRITE access. You may create, modify, and delete files as needed to help the user.');
+        }
+        return parts.join('\n\n');
+    }
+
+    // ===== Read Context Files =====
+    async readFileContent(filePath) {
+        try {
+            const file = this.app.vault.getAbstractFileByPath(filePath);
+            if (file) {
+                return await this.app.vault.read(file);
+            }
+        } catch (e) {
+            console.error('Error reading file:', filePath, e);
+        }
+        return '';
     }
 
     // ===== Send Message =====
@@ -388,6 +740,29 @@ class CopilotChatView extends ItemView {
 
     showLoading() { this.loadingEl.style.display = 'flex'; this.scrollToBottom(); }
     hideLoading() { this.loadingEl.style.display = 'none'; }
+
+    setSendingState() {
+        this.isGenerating = true;
+        this.sendBtn.innerHTML = ICONS.stop;
+        this.sendBtn.style.background = 'var(--text-error)';
+        this.sendBtn.disabled = false;
+        this.inputEl.disabled = true;
+    }
+
+    setIdleState() {
+        this.isGenerating = false;
+        this.sendBtn.innerHTML = ICONS.send;
+        this.sendBtn.style.background = '';
+        this.sendBtn.disabled = false;
+        this.inputEl.disabled = false;
+        this.abortController = null;
+    }
+
+    stopGeneration() {
+        if (this.abortController) {
+            this.abortController.abort();
+        }
+    }
 
     async sendMessage() {
         const text = this.inputEl.value.trim();
@@ -400,7 +775,7 @@ class CopilotChatView extends ItemView {
 
         this.inputEl.value = '';
         this.inputEl.style.height = 'auto';
-        this.sendBtn.disabled = true;
+        this.setSendingState();
 
         // Ensure conversation exists
         if (!this.conversation) this.conversation = this.plugin.createConversation();
@@ -411,11 +786,26 @@ class CopilotChatView extends ItemView {
         }
 
         // Remove welcome
-        const welcomeEl = this.chatArea.querySelector('.copilot-cli-welcome');
+        const welcomeEl = this.chatArea.querySelector('.deepseek-cli-welcome');
         if (welcomeEl) welcomeEl.remove();
 
+        // Build user message with context
+        let userText = text;
+        if (this.contextFiles.length > 0) {
+            let contextStr = '';
+            for (const filePath of this.contextFiles) {
+                const content = await this.readFileContent(filePath);
+                if (content) {
+                    contextStr += `\n\n<context file="${filePath}">\n${content}\n</context>`;
+                }
+            }
+            if (contextStr) {
+                userText = `${text}\n\n--- Context Files ---${contextStr}`;
+            }
+        }
+
         // Append user message
-        const userMsg = { role: 'user', content: text, timestamp: Date.now() };
+        const userMsg = { role: 'user', content: userText, timestamp: Date.now() };
         this.conversation.messages.push(userMsg);
         this.renderMessage(userMsg);
         this.scrollToBottom();
@@ -424,43 +814,80 @@ class CopilotChatView extends ItemView {
 
         const assistantMsg = { role: 'assistant', content: '', model: s.model, timestamp: Date.now() };
 
+        this.abortController = new AbortController();
+        const abortPromise = new Promise((_, reject) => {
+            this.abortController.signal.addEventListener('abort', () => {
+                reject(new DOMException('Aborted', 'AbortError'));
+            });
+        });
+
         try {
             let response, data;
             const apiMessages = this.conversation.messages.filter(m => m.content);
+            const systemInstructions = this.getSystemInstructions();
 
             if (s.providerType === 'anthropic') {
-                response = await requestUrl({
-                    url: s.baseUrl.replace(/\/$/, '') + '/v1/messages',
-                    method: 'POST',
-                    headers: buildAnthropicHeaders(s.apiKey),
-                    body: JSON.stringify({ model: s.model, max_tokens: 4096, messages: toAnthropicMessages(apiMessages), stream: false }),
-                });
+                const body = { model: s.model, max_tokens: 4096, messages: toAnthropicMessages(apiMessages), stream: false };
+                if (systemInstructions) body.system = systemInstructions;
+                response = await Promise.race([
+                    requestUrl({
+                        url: s.baseUrl.replace(/\/$/, '') + '/v1/messages',
+                        method: 'POST',
+                        headers: buildAnthropicHeaders(s.apiKey),
+                        body: JSON.stringify(body),
+                    }),
+                    abortPromise,
+                ]);
                 data = response.json;
                 assistantMsg.content = data.content?.map(c => c.text).join('') || '';
+                assistantMsg.tokens = data.usage ? {
+                    input: data.usage.input_tokens || 0,
+                    output: data.usage.output_tokens || 0,
+                } : null;
             } else {
-                response = await requestUrl({
-                    url: s.baseUrl.replace(/\/$/, '') + '/v1/chat/completions',
-                    method: 'POST',
-                    headers: buildOpenAIHeaders(s.apiKey),
-                    body: JSON.stringify({ model: s.model, messages: toOpenAIMessages(apiMessages), stream: false, temperature: 0.7 }),
-                });
+                let messages = toOpenAIMessages(apiMessages);
+                if (systemInstructions) {
+                    messages = [{ role: 'system', content: systemInstructions }, ...messages];
+                }
+                response = await Promise.race([
+                    requestUrl({
+                        url: s.baseUrl.replace(/\/$/, '') + '/v1/chat/completions',
+                        method: 'POST',
+                        headers: buildOpenAIHeaders(s.apiKey),
+                        body: JSON.stringify({ model: s.model, messages, stream: false, temperature: 0.7 }),
+                    }),
+                    abortPromise,
+                ]);
                 data = response.json;
                 assistantMsg.content = data.choices?.[0]?.message?.content || '';
+                assistantMsg.tokens = data.usage ? {
+                    input: data.usage.prompt_tokens || 0,
+                    output: data.usage.completion_tokens || 0,
+                } : null;
             }
             if (!assistantMsg.content) assistantMsg.content = '_(empty response)_';
         } catch (err) {
-            assistantMsg.content = `**Error:** ${err.message}`;
-            console.error('API error:', err);
+            if (err.name === 'AbortError' || err.message?.includes('abort')) {
+                assistantMsg.content = '⏹ _Generation stopped._';
+            } else {
+                assistantMsg.content = `**Error:** ${err.message}`;
+                console.error('API error:', err);
+            }
         }
 
         this.hideLoading();
         assistantMsg.timestamp = Date.now();
         this.conversation.messages.push(assistantMsg);
+        // Track total tokens
+        if (assistantMsg.tokens) {
+            this.conversation.totalTokens = (this.conversation.totalTokens || 0) +
+                assistantMsg.tokens.input + assistantMsg.tokens.output;
+        }
         this.conversation.updatedAt = Date.now();
         this.renderMessage(assistantMsg);
         this.scrollToBottom();
 
-        this.sendBtn.disabled = false;
+        this.setIdleState();
         this.renderSidebar();
         this.plugin.activeConversationId = this.conversation.id;
         await this.plugin.saveDataFull();
@@ -468,7 +895,7 @@ class CopilotChatView extends ItemView {
 }
 
 // ====== Settings Tab ======
-class CopilotCLISettingTab extends PluginSettingTab {
+class DeepSeekCLISettingTab extends PluginSettingTab {
     constructor(app, plugin) {
         super(app, plugin);
         this.plugin = plugin;
@@ -477,8 +904,8 @@ class CopilotCLISettingTab extends PluginSettingTab {
     display() {
         const { containerEl } = this;
         containerEl.empty();
-        containerEl.createEl('h2', { text: 'Copilot CLI Chat Settings' });
-        containerEl.createEl('p', { text: 'Configure the API provider. These settings should match your Copilot CLI environment variables.', cls: 'setting-item-description' });
+        containerEl.createEl('h2', { text: 'DeepSeek CLI Chat Settings' });
+        containerEl.createEl('p', { text: 'Configure the API provider. These settings should match your DeepSeek CLI environment variables.', cls: 'setting-item-description' });
 
         new Setting(containerEl)
             .setName('Protocol')
@@ -498,10 +925,10 @@ class CopilotCLISettingTab extends PluginSettingTab {
                 t.setPlaceholder('sk-...').setValue(this.plugin.settings.apiKey)
                     .onChange(async v => { this.plugin.settings.apiKey = v; await this.plugin.saveSettings(); });
                 t.inputEl.type = 'password';
-                t.inputEl.addClass('copilot-cli-api-key-input');
+                t.inputEl.addClass('deepseek-cli-api-key-input');
             })
             .addExtraButton(btn => btn.setIcon('eye').setTooltip('Show API key').onClick(() => {
-                const inputEl = containerEl.querySelector('.copilot-cli-api-key-input');
+                const inputEl = containerEl.querySelector('.deepseek-cli-api-key-input');
                 const isPw = inputEl.type === 'password';
                 inputEl.type = isPw ? 'text' : 'password';
                 btn.setIcon(isPw ? 'eye-off' : 'eye');
@@ -513,30 +940,35 @@ class CopilotCLISettingTab extends PluginSettingTab {
             .addText(t => t.setPlaceholder('deepseek-v4-pro').setValue(this.plugin.settings.model)
                 .onChange(async v => { this.plugin.settings.model = v; await this.plugin.saveSettings(); }));
 
+        new Setting(containerEl)
+            .setName('Available Models').setDesc('Comma-separated list of models for the selector dropdown')
+            .addText(t => t.setPlaceholder('deepseek-v4-pro, deepseek-chat, deepseek-reasoner').setValue(this.plugin.settings.models || '')
+                .onChange(async v => { this.plugin.settings.models = v; await this.plugin.saveSettings(); }));
+
         containerEl.createEl('hr');
-        containerEl.createEl('p', { text: 'Tip: Your Copilot CLI settings come from ~/.zshrc environment variables (COPILOT_PROVIDER_TYPE, COPILOT_PROVIDER_BASE_URL, COPILOT_PROVIDER_API_KEY, COPILOT_MODEL). Keep them in sync.', cls: 'setting-item-description' });
+        containerEl.createEl('p', { text: 'Tip: Your DeepSeek CLI settings come from ~/.zshrc environment variables (DEEPSEEK_PROVIDER_TYPE, DEEPSEEK_PROVIDER_BASE_URL, DEEPSEEK_PROVIDER_API_KEY, DEEPSEEK_MODEL). Keep them in sync.', cls: 'setting-item-description' });
     }
 }
 
 // ====== Plugin ======
-class CopilotCLIPlugin extends Plugin {
+class DeepSeekCLIPlugin extends Plugin {
     async onload() {
-        console.log('Loading Copilot CLI Chat plugin');
+        console.log('Loading DeepSeek CLI Chat plugin');
         await this.loadSettings();
         this.conversations = [];
         this.activeConversationId = null;
         await this.loadConversations();
 
-        this.addSettingTab(new CopilotCLISettingTab(this.app, this));
-        this.registerView(VIEW_TYPE, (leaf) => new CopilotChatView(leaf, this));
+        this.addSettingTab(new DeepSeekCLISettingTab(this.app, this));
+        this.registerView(VIEW_TYPE, (leaf) => new DeepSeekChatView(leaf, this));
 
-        this.addRibbonIcon('bot', 'Open Copilot CLI Chat', () => this.activateView());
-        this.addCommand({ id: 'open-copilot-cli-chat', name: 'Open Copilot CLI Chat', callback: () => this.activateView() });
+        this.addRibbonIcon(ICONS.robot, 'Open DeepSeek CLI Chat', () => this.activateView());
+        this.addCommand({ id: 'open-deepseek-cli-chat', name: 'Open DeepSeek CLI Chat', callback: () => this.activateView() });
 
         this.app.workspace.onLayoutReady(() => this.activateView());
     }
 
-    async onunload() { console.log('Unloading Copilot CLI Chat plugin'); }
+    async onunload() { console.log('Unloading DeepSeek CLI Chat plugin'); }
 
     // ===== Settings =====
     async loadSettings() {
@@ -555,7 +987,7 @@ class CopilotCLIPlugin extends Plugin {
         await this.saveDataFull();
         const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE);
         for (const leaf of leaves) {
-            if (leaf.view instanceof CopilotChatView) leaf.view.updateStatus();
+            if (leaf.view instanceof DeepSeekChatView) leaf.view.updateStatus();
         }
     }
 
@@ -608,4 +1040,4 @@ class CopilotCLIPlugin extends Plugin {
     }
 }
 
-module.exports = CopilotCLIPlugin;
+module.exports = DeepSeekCLIPlugin;

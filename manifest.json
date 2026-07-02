@@ -1,9 +1,9 @@
 {
-  "id": "copilot-cli",
-  "name": "GitHub Copilot CLI Chat",
+  "id": "deepseek-cli",
+  "name": "DeepSeek CLI Chat",
   "version": "1.0.0",
   "minAppVersion": "0.15.0",
-  "description": "Chat with GitHub Copilot using the same API as Copilot CLI",
+  "description": "Chat with DeepSeek models in Obsidian",
   "author": "HXXXL",
   "authorUrl": "",
   "isDesktopOnly": false
