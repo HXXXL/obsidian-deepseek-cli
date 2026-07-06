@@ -98,34 +98,15 @@ class FileSelectModal extends FuzzySuggestModal {
         super(app);
         this.items = items;
         this.onSubmit = onSubmit;
-        this.selected = new Set();
         this.setPlaceholder('Search files to add as context...');
     }
 
     getItems() { return this.items; }
     getItemText(item) {
-        return (this.selected.has(item.path) ? '✓ ' : '') + item.name;
+        return item.name;
     }
-    onChooseItem(item, evt) {
-        if (this.selected.has(item.path)) {
-            this.selected.delete(item.path);
-        } else {
-            this.selected.add(item.path);
-        }
-        // Refresh suggestions to show checkmarks
-        this.inputEl.value = '';
-        this.inputEl.dispatchEvent(new Event('input'));
-        // Show current selection count
-        if (this.selected.size > 0) {
-            this.resultContainerEl.createDiv({ text: `Selected: ${this.selected.size} file(s)`, cls: 'suggestion-hotkey' });
-        }
-    }
-
-    onClose() {
-        super.onClose();
-        if (this.selected.size > 0) {
-            this.onSubmit(Array.from(this.selected));
-        }
+    onChooseItem(item) {
+        this.onSubmit(item.path);
     }
 }
 
@@ -645,12 +626,10 @@ class DeepSeekChatView extends ItemView {
             path: f.path,
             name: f.path,
         }));
-        new FileSelectModal(this.app, items, (selectedPaths) => {
-            selectedPaths.forEach(p => {
-                if (!this.contextFiles.includes(p)) {
-                    this.contextFiles.push(p);
-                }
-            });
+        new FileSelectModal(this.app, items, (selectedPath) => {
+            if (!this.contextFiles.includes(selectedPath)) {
+                this.contextFiles.push(selectedPath);
+            }
             this.renderChips();
         }).open();
     }
