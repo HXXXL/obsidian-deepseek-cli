@@ -6,10 +6,20 @@ const VIEW_TYPE = 'deepseek-cli-chat';
 const DEFAULT_SETTINGS = {
     providerType: 'anthropic',
     baseUrl: 'https://api.deepseek.com/anthropic',
-    apiKey: 'sk-14a5e1375ab64630a519aa18ea5a8dcd',
+    apiKey: '',
     model: 'deepseek-v4-pro',
     models: 'deepseek-v4-pro, deepseek-chat, deepseek-reasoner',
 };
+
+// ====== Tool Definitions ======
+const TOOLS = [
+    { name: 'read_file', description: 'Read a file in the Obsidian vault by path.', input_schema: { type: 'object', properties: { path: { type: 'string', description: 'File path relative to vault root' } }, required: ['path'] } },
+    { name: 'write_file', description: 'Create or overwrite a file with new content.', input_schema: { type: 'object', properties: { path: { type: 'string', description: 'File path relative to vault root' }, content: { type: 'string', description: 'Full content to write' } }, required: ['path', 'content'] } },
+    { name: 'edit_file', description: 'Edit a file by replacing an exact string match.', input_schema: { type: 'object', properties: { path: { type: 'string', description: 'File path relative to vault root' }, old_string: { type: 'string', description: 'Exact text to find and replace' }, new_string: { type: 'string', description: 'Replacement text' } }, required: ['path', 'old_string', 'new_string'] } },
+    { name: 'list_files', description: 'List files and directories in a vault directory.', input_schema: { type: 'object', properties: { path: { type: 'string', description: 'Directory path relative to vault root. Use empty string for root.' } }, required: ['path'] } },
+    { name: 'search_files', description: 'Search for files matching a glob pattern in the vault.', input_schema: { type: 'object', properties: { pattern: { type: 'string', description: 'Glob pattern for matching file paths' }, path: { type: 'string', description: 'Directory to search within. Use empty string for root.' } }, required: ['pattern'] } },
+];
+const WRITE_TOOL_NAMES = ['write_file', 'edit_file'];
 
 // ====== Helpers ======
 function uid() {
@@ -22,10 +32,35 @@ function buildOpenAIHeaders(apiKey) {
     return { 'Authorization': `Bearer ${apiKey}`, 'Content-Type': 'application/json' };
 }
 function toAnthropicMessages(messages) {
-    return messages.filter(m => m.content).map(m => ({ role: m.role, content: m.content }));
+    const result = [];
+    for (const m of messages) {
+        if (m.tool_use) {
+            result.push({ role: 'assistant', content: [{ type: 'tool_use', id: m.tool_use.id, name: m.tool_use.name, input: m.tool_use.input }] });
+        } else if (m.tool_result) {
+            result.push({ role: 'user', content: [{ type: 'tool_result', tool_use_id: m.tool_result.tool_use_id, content: m.tool_result.content }] });
+        } else if (m.content) {
+            result.push({ role: m.role, content: m.content });
+        }
+    }
+    return result;
 }
 function toOpenAIMessages(messages) {
-    return messages.filter(m => m.content).map(m => ({ role: m.role, content: m.content }));
+    const result = [];
+    for (const m of messages) {
+        if (m.tool_use) {
+            const last = result[result.length - 1];
+            if (last && last.role === 'assistant' && !last.tool_calls) {
+                last.tool_calls = [{ id: m.tool_use.id, type: 'function', function: { name: m.tool_use.name, arguments: JSON.stringify(m.tool_use.input) } }];
+            } else {
+                result.push({ role: 'assistant', tool_calls: [{ id: m.tool_use.id, type: 'function', function: { name: m.tool_use.name, arguments: JSON.stringify(m.tool_use.input) } }] });
+            }
+        } else if (m.tool_result) {
+            result.push({ role: 'tool', tool_call_id: m.tool_result.tool_use_id, content: m.tool_result.content });
+        } else if (m.content) {
+            result.push({ role: m.role, content: m.content });
+        }
+    }
+    return result;
 }
 
 // ====== SVG Icons ======
@@ -710,12 +745,11 @@ class DeepSeekChatView extends ItemView {
     getSystemInstructions() {
         const parts = [];
         if (this.planMode) {
-            parts.push('You are in PLAN mode. Before implementing anything, output a concise plan outlining your approach step by step. Do NOT execute or make any changes yet — wait for the user to review and approve the plan before proceeding. End your plan with a clear ask for approval, e.g. "Shall I proceed with this plan?"');
+            parts.push('You are in PLAN mode. Before implementing anything, output a concise plan outlining your approach step by step. Do NOT execute any tools or make any changes yet — wait for the user to review and approve the plan before proceeding. End your plan with a clear ask for approval, e.g. "Shall I proceed with this plan?"');
         }
+        parts.push('You have access to file operation tools: read_file, list_files, search_files' + (this.permission === 'read-write' ? ', write_file, edit_file' : '') + '. Use these tools to read, browse, and ' + (this.permission === 'read-write' ? 'modify' : 'read') + ' files in the Obsidian vault. Always use tools instead of asking the user to manually copy/paste file contents.');
         if (this.permission === 'read-only') {
-            parts.push('You are in READ-ONLY mode. Do NOT create, modify, or delete any files. You can only read and provide advice, explanations, and code snippets for the user to copy manually.');
-        } else {
-            parts.push('You have READ & WRITE access. You may create, modify, and delete files as needed to help the user.');
+            parts.push('You are in READ-ONLY mode. Do NOT call write_file or edit_file tools. You can read files, search, and provide advice, explanations, and code snippets.');
         }
         return parts.join('\n\n');
     }
@@ -731,6 +765,145 @@ class DeepSeekChatView extends ItemView {
             console.error('Error reading file:', filePath, e);
         }
         return '';
+    }
+
+    // ===== Tool Execution =====
+    async executeTool(name, input) {
+        try {
+            switch (name) {
+                case 'read_file': {
+                    const file = this.app.vault.getAbstractFileByPath(input.path);
+                    if (!file) return `Error: File not found: ${input.path}`;
+                    return await this.app.vault.read(file);
+                }
+                case 'write_file': {
+                    const dir = input.path.includes('/') ? input.path.substring(0, input.path.lastIndexOf('/')) : '';
+                    if (dir) {
+                        const dirFile = this.app.vault.getAbstractFileByPath(dir);
+                        if (!dirFile) await this.app.vault.createFolder(dir);
+                    }
+                    const existing = this.app.vault.getAbstractFileByPath(input.path);
+                    if (existing) {
+                        await this.app.vault.modify(existing, input.content);
+                    } else {
+                        await this.app.vault.create(input.path, input.content);
+                    }
+                    return `File written: ${input.path}`;
+                }
+                case 'edit_file': {
+                    const file = this.app.vault.getAbstractFileByPath(input.path);
+                    if (!file) return `Error: File not found: ${input.path}`;
+                    const content = await this.app.vault.read(file);
+                    if (!content.includes(input.old_string)) return `Error: old_string not found in ${input.path}`;
+                    const first = content.indexOf(input.old_string);
+                    const last = content.lastIndexOf(input.old_string);
+                    if (first !== last) return `Error: old_string is not unique in ${input.path} (found ${content.split(input.old_string).length - 1} occurrences)`;
+                    const newContent = content.replace(input.old_string, input.new_string);
+                    await this.app.vault.modify(file, newContent);
+                    return `File edited: ${input.path}`;
+                }
+                case 'list_files': {
+                    const dirPath = input.path || '';
+                    const folder = dirPath ? this.app.vault.getAbstractFileByPath(dirPath) : this.app.vault.getRoot();
+                    if (!folder) return `Error: Directory not found: ${dirPath}`;
+                    if (!folder.children) return `Error: Not a directory: ${dirPath}`;
+                    const list = folder.children.map(c => `${c.path}${c.children ? '/' : ''}`).join('\n');
+                    return list || '(empty directory)';
+                }
+                case 'search_files': {
+                    const dirPath = input.path || '';
+                    const pattern = input.pattern;
+                    let files;
+                    if (dirPath) {
+                        const folder = this.app.vault.getAbstractFileByPath(dirPath);
+                        if (!folder || !folder.children) return `Error: Not a valid directory: ${dirPath}`;
+                        files = folder.children;
+                    } else {
+                        files = this.app.vault.getMarkdownFiles();
+                    }
+                    // Simple glob matching - support **, * and basic patterns
+                    const regex = new RegExp('^' + pattern.replace(/\*\*/g, '<<<GLOBSTAR>>>').replace(/\*/g, '[^/]*').replace(/<<<GLOBSTAR>>>/g, '.*').replace(/\?/g, '.') + '$', 'i');
+                    const matches = files.filter(f => regex.test(f.path)).map(f => f.path);
+                    return matches.length ? matches.join('\n') : 'No files matched.';
+                }
+                default:
+                    return `Error: Unknown tool: ${name}`;
+            }
+        } catch (e) {
+            return `Error executing ${name}: ${e.message}`;
+        }
+    }
+
+    async callModelWithTools(messages, systemInstructions, permission) {
+        const s = this.plugin.settings;
+        const maxTurns = 10;
+        let turns = 0;
+        let totalInput = 0, totalOutput = 0;
+
+        while (turns < maxTurns) {
+            turns++;
+            if (this.abortController && this.abortController.signal.aborted) {
+                throw new DOMException('Aborted', 'AbortError');
+            }
+
+            let body, url, headers;
+            if (s.providerType === 'anthropic') {
+                const apiTools = permission === 'read-only' ? TOOLS.filter(t => !WRITE_TOOL_NAMES.includes(t.name)) : TOOLS;
+                body = { model: s.model, max_tokens: 4096, messages: toAnthropicMessages(messages), stream: false, tools: apiTools };
+                if (systemInstructions) body.system = systemInstructions;
+                url = s.baseUrl.replace(/\/$/, '') + '/v1/messages';
+                headers = buildAnthropicHeaders(s.apiKey);
+            } else {
+                const apiTools = permission === 'read-only' ? TOOLS.filter(t => !WRITE_TOOL_NAMES.includes(t.name)) : TOOLS;
+                const openaiTools = apiTools.map(t => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.input_schema } }));
+                let msgs = toOpenAIMessages(messages);
+                if (systemInstructions) msgs = [{ role: 'system', content: systemInstructions }, ...msgs];
+                body = { model: s.model, messages: msgs, stream: false, temperature: 0.7, tools: openaiTools };
+                url = s.baseUrl.replace(/\/$/, '') + '/v1/chat/completions';
+                headers = buildOpenAIHeaders(s.apiKey);
+            }
+
+            const abortPromise = new Promise((_, reject) => {
+                this.abortController.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
+            });
+
+            const response = await Promise.race([requestUrl({ url, method: 'POST', headers, body: JSON.stringify(body) }), abortPromise]);
+            const data = response.json;
+
+            if (s.providerType === 'anthropic') {
+                if (data.usage) { totalInput += data.usage.input_tokens || 0; totalOutput += data.usage.output_tokens || 0; }
+                const textBlocks = data.content?.filter(c => c.type === 'text') || [];
+                const toolBlocks = data.content?.filter(c => c.type === 'tool_use') || [];
+
+                if (toolBlocks.length > 0) {
+                    for (const tool of toolBlocks) {
+                        messages.push({ role: 'assistant', content: '', tool_use: { id: tool.id, name: tool.name, input: tool.input }, timestamp: Date.now() });
+                        const result = await this.executeTool(tool.name, tool.input);
+                        messages.push({ role: 'user', content: '', tool_result: { tool_use_id: tool.id, content: result }, timestamp: Date.now() });
+                    }
+                    continue; // loop for next model call
+                }
+
+                const text = textBlocks.map(c => c.text).join('') || '';
+                return { content: text || '_(empty response)_', tokens: { input: totalInput, output: totalOutput } };
+            } else {
+                if (data.usage) { totalInput += data.usage.prompt_tokens || 0; totalOutput += data.usage.completion_tokens || 0; }
+                const choice = data.choices?.[0];
+                if (choice?.finish_reason === 'tool_calls' && choice.message?.tool_calls) {
+                    for (const tc of choice.message.tool_calls) {
+                        let input;
+                        try { input = JSON.parse(tc.function.arguments); } catch { input = {}; }
+                        messages.push({ role: 'assistant', content: '', tool_use: { id: tc.id, name: tc.function.name, input }, timestamp: Date.now() });
+                        const result = await this.executeTool(tc.function.name, input);
+                        messages.push({ role: 'user', content: '', tool_result: { tool_use_id: tc.id, content: result }, timestamp: Date.now() });
+                    }
+                    continue; // loop for next model call
+                }
+                const text = choice?.message?.content || '';
+                return { content: text || '_(empty response)_', tokens: { input: totalInput, output: totalOutput } };
+            }
+        }
+        return { content: '_(max tool turns reached)_', tokens: { input: totalInput, output: totalOutput } };
     }
 
     // ===== Send Message =====
@@ -815,56 +988,12 @@ class DeepSeekChatView extends ItemView {
         const assistantMsg = { role: 'assistant', content: '', model: s.model, timestamp: Date.now() };
 
         this.abortController = new AbortController();
-        const abortPromise = new Promise((_, reject) => {
-            this.abortController.signal.addEventListener('abort', () => {
-                reject(new DOMException('Aborted', 'AbortError'));
-            });
-        });
 
         try {
-            let response, data;
-            const apiMessages = this.conversation.messages.filter(m => m.content);
             const systemInstructions = this.getSystemInstructions();
-
-            if (s.providerType === 'anthropic') {
-                const body = { model: s.model, max_tokens: 4096, messages: toAnthropicMessages(apiMessages), stream: false };
-                if (systemInstructions) body.system = systemInstructions;
-                response = await Promise.race([
-                    requestUrl({
-                        url: s.baseUrl.replace(/\/$/, '') + '/v1/messages',
-                        method: 'POST',
-                        headers: buildAnthropicHeaders(s.apiKey),
-                        body: JSON.stringify(body),
-                    }),
-                    abortPromise,
-                ]);
-                data = response.json;
-                assistantMsg.content = data.content?.map(c => c.text).join('') || '';
-                assistantMsg.tokens = data.usage ? {
-                    input: data.usage.input_tokens || 0,
-                    output: data.usage.output_tokens || 0,
-                } : null;
-            } else {
-                let messages = toOpenAIMessages(apiMessages);
-                if (systemInstructions) {
-                    messages = [{ role: 'system', content: systemInstructions }, ...messages];
-                }
-                response = await Promise.race([
-                    requestUrl({
-                        url: s.baseUrl.replace(/\/$/, '') + '/v1/chat/completions',
-                        method: 'POST',
-                        headers: buildOpenAIHeaders(s.apiKey),
-                        body: JSON.stringify({ model: s.model, messages, stream: false, temperature: 0.7 }),
-                    }),
-                    abortPromise,
-                ]);
-                data = response.json;
-                assistantMsg.content = data.choices?.[0]?.message?.content || '';
-                assistantMsg.tokens = data.usage ? {
-                    input: data.usage.prompt_tokens || 0,
-                    output: data.usage.completion_tokens || 0,
-                } : null;
-            }
+            const result = await this.callModelWithTools(this.conversation.messages, systemInstructions, this.permission);
+            assistantMsg.content = result.content;
+            assistantMsg.tokens = result.tokens;
             if (!assistantMsg.content) assistantMsg.content = '_(empty response)_';
         } catch (err) {
             if (err.name === 'AbortError' || err.message?.includes('abort')) {
